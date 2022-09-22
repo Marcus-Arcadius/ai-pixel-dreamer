@@ -39,4 +39,3 @@ https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4p
 and copy to src/realesrgan/experiments/pretrained_models
 
 Pull requests go to dev only
-
