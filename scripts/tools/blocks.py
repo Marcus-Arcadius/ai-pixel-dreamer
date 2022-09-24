@@ -2,28 +2,101 @@ from barfi import Block
 from scripts.tools.deforum_runner import runner
 import streamlit as st
 import random
-
+import numpy as np
+import cv2
+from scripts.tools.modelloader import load_models
 from scripts.tools.sd_utils import img2img
+from scripts.tools.sd_utils import *
+from gfpgan import GFPGANer
 
 import PIL
+import torch
 def_runner = runner()
 
+#Open Image
+open_block = Block(name='Open Image')
+open_block.add_option(name='path', type='input')
+open_block.add_output(name='Image')
+def open_func(self):
+  image = PIL.Image.open(self.get_option(name='path'))
+  self.set_interface(name='Image', value=image)
+open_block.add_compute(open_func)
+
+
+save_block = Block(name='Save Image')
+save_block.add_input(name='Image Input')
+save_block.add_option(name='path', type='input', value=st.session_state['defaults'].general.outdir)
+save_block.add_option(name='name', type='input', value=f'{str(random.randint(10000, 99999))}.png')
+save_block.add_output(name='Image')
+def save_func(self):
+  image = self.get_interface(name='Image Input')
+  path = os.path.join(self.get_option(name='path'), self.get_option(name='name'))
+  image.save(path)
+  self.set_interface(name='Image', value=image)
+save_block.add_compute(save_func)
+
+save_all_block = Block(name='Save All Images')
+save_all_block.add_option(name='empty_memory', type='checkbox')
+save_all_block.add_option(name='path', type='input', value=st.session_state['defaults'].general.outdir)
+save_all_block.add_option(name='name', type='input', value=f'{str(random.randint(10000, 99999))}')
+def save_all_func(self):
+  images = st.session_state["currentImages"]
+  a = 0
+  path = self.get_option(name='path')
+  os.makedirs(path, exist_ok=True)
+  for i in images:
+
+    a = a + 1
+    counter = f'00{a}'
+    counter = counter[:3]
+    name = self.get_option(name="name")
+    name = f'{name}_{counter}.png'
+    spath = os.path.join(path, name)
+    i.save(spath)
+  if self.get_option(name='empty_memory') == True:
+    st.session_state["currentImages"] = []
+  #path = os.path.join(self.get_option(name='path'), self.get_option(name='name'))
+  #image.save(path)
+  #self.set_interface(name='Image', value=image)
+save_all_block.add_compute(save_all_func)
+
+
+
 #SD Custom Blocks:
-#Upscaler Block - test
-upscale_block = Block(name='Upscale')
-upscale_block.add_option(name='Upscale Strength', type='slider', min=1, max=8, value=1)
-upscale_block.add_option(name='Input Image', type='input')
-upscale_block.add_output(name='Path')
-upscale_block.add_output(name='Function')
+#GFPGAN Block
+upscale_block = Block(name='GFPGAN')
+upscale_block.add_input(name='Input_Image')
+upscale_block.add_option(name='Upscale', type='integer', value=1)
+upscale_block.add_output(name='Restored_Img')
 def upscale_func(self):
-    data = 'doUpscale'
-    self.set_interface(name='Function', value=data)
-    data = self.get_option(name='Input Image')
-    self.set_interface(name='Path', value=data)
+    upscale = int(self.get_option(name='Upscale'))
+    data = self.get_interface(name='Input_Image')
+    arch = 'clean'
+    channel_multiplier = 2
+    model_name = 'GFPGANv1.3'
+    model_path = os.path.join(st.session_state['defaults'].general.GFPGAN_dir,
+                              model_name + '.pth')
+    restorer = GFPGANer(
+        model_path=model_path,
+        upscale=upscale,
+        arch=arch,
+        channel_multiplier=channel_multiplier,
+        bg_upsampler=None
+    )
+    #torch_gc()
+
+    if isinstance(data, list):
+        data = data[0]
+    image=np.array(data)
+    input_img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    cropped_faces, restored_faces, restored_img = restorer.enhance(
+        input_img, has_aligned=False, only_center_face=False, paste_back=True)
+    image = cv2.cvtColor(restored_img, cv2.COLOR_BGR2RGB)
+    gfpgan_image = PIL.Image.fromarray(image)
+    self.set_interface(name='Restored_Img', value=gfpgan_image)
 upscale_block.add_compute(upscale_func)
 
 def img2img_runner():
-    print("trying...")
     print(st.session_state["img2img"]["new_img"])
     print(st.session_state["img2img"]["steps"])
     print(st.session_state["img2img"]["seed"])
@@ -38,49 +111,95 @@ def img2img_runner():
 #img2img Block
 img2img_block = Block(name='img2img Node')
 img2img_block.add_input(name='2ImageIn')
+img2img_block.add_input(name='Var Amount')
+img2img_block.add_input(name='CFG Scale')
+img2img_block.add_input(name='Steps')
+img2img_block.add_input(name='Sampler')
+img2img_block.add_input(name='Seed')
+img2img_block.add_input(name='Prompt')
 img2img_block.add_option(name='seedInfo', type='display', value='Prompt:')
 img2img_block.add_option(name='2Prompt', type='input', value='')
+img2img_block.add_option(name='Sampler', type='select', items=["k_lms", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "k_heun", "PLMS", "DDIM"], value="k_dpm_2_a")
 img2img_block.add_option(name='Variant', type='display', value='Variant Amount:')
 img2img_block.add_option(name='Var Amount', type='number', value = 0.5)
 img2img_block.add_option(name='CFG_Info', type='display', value='CFG Scale:')
 img2img_block.add_option(name='CFG Scale', type='number', value = 7.5)
 img2img_block.add_option(name='Steps_Info', type='display', value='Steps:')
-img2img_block.add_option(name='steps', type='integer')
+img2img_block.add_option(name='steps', type='integer', value=20)
+img2img_block.add_option(name='Seed info', type='display', value='Seed:')
+img2img_block.add_option(name='seed', type='integer', value=-1)
+img2img_block.add_output(name='Var AmountOut')
+img2img_block.add_output(name='CFG ScaleOut')
+img2img_block.add_output(name='StepsOut')
+img2img_block.add_output(name='SamplerOut')
+img2img_block.add_output(name='SeedOut')
+img2img_block.add_output(name='PromptOut')
 img2img_block.add_output(name='2Image')
 def img2img_func(self):
-    print('step1 ok')
+    if self.get_interface(name='Var Amount') != None:
+        var_amount = self.get_interface(name='Var Amount')
+    else:
+        var_amount = self.get_option(name='Var Amount')
+    if self.get_interface(name='CFG Scale') != None:
+        cfg_scale = self.get_interface(name='CFG Scale')
+    else:
+        cfg_scale = self.get_option(name='CFG Scale')
+    if self.get_interface(name='Steps') != None:
+        steps = self.get_interface(name='Steps')
+    else:
+        steps = self.get_option(name='steps')
+    st.session_state["sampling_steps"] = steps
+    if self.get_interface(name='Sampler') != None:
+        samplern = self.get_interface(name='Sampler')
+    else:
+        samplern = self.get_option(name='Sampler')
+    if self.get_interface(name='Prompt') != None:
+        prompt2 = self.get_interface(name='Prompt')
+    else:
+        prompt2 = self.get_option(name='2Prompt')
+    if self.get_interface(name='Seed') != None:
+        seed = self.get_interface(name='Seed')
+    else:
+        seed = self.get_option(name='seed')
 
     init_img = self.get_interface(name='2ImageIn')
-    init_img = init_img.convert('RGBA')
-    prompt2 = self.get_option(name='2Prompt')
-    print('step2 ok')
+    print(init_img)
+    if isinstance(init_img, list):
+        init_img = init_img[0]
 
-    output_images, seed, info, stats = img2img(prompt = '',
+    init_img = init_img.convert('RGBA')
+    output_images, seed, info, stats = img2img(prompt = prompt2,
                                                init_info = init_img,
                                                init_info_mask = None,
                                                mask_mode = 0,
                                                mask_blur_strength = 3,
                                                mask_restore = False,
-                                               ddim_steps = 50,
-                                               sampler_name = 'DDIM',
+                                               ddim_steps = steps,
+                                               sampler_name = samplern,
                                                n_iter = 1,
-                                               cfg_scale = 7.5,
+                                               cfg_scale = cfg_scale,
                                                denoising_strength = 0.8,
-                                               seed = -1,
+                                               seed = seed,
                                                noise_mode = 0,
-                                               find_noise_steps = "",
+                                               find_noise_steps = 100,
                                                height = 512,
                                                width = 512,
                                                resize_mode = 0,
-                                               fp=None,
-                                               variant_amount = None, variant_seed = None, ddim_eta = 0.0,
-                                               write_info_files = True, RealESRGAN_model = "RealESRGAN_x4plus_anime_6B",
+                                               fp="./outputs",
+                                               variant_amount = var_amount, variant_seed = seed - 1, ddim_eta = 0.0,
+                                               write_info_files = False, RealESRGAN_model = "RealESRGAN_x4plus_anime_6B",
                                                separate_prompts = False, normalize_prompt_weights = False,
-                                               save_individual_images = True, save_grid = True, group_by_prompt = True,
-                                               save_as_jpg = True, use_GFPGAN = True, use_RealESRGAN = True, loopback = False,
+                                               save_individual_images = True, save_grid = False, group_by_prompt = True,
+                                               save_as_jpg = False, use_GFPGAN = False, use_RealESRGAN = False, loopback = False,
                                                random_seed_loopback = False
                                                )
-    self.set_interface(name='2Image', value=output_images)
+    self.set_interface(name='2Image', value=output_images[0])
+    self.set_interface(name='Var AmountOut', value=var_amount)
+    self.set_interface(name='CFG ScaleOut', value=cfg_scale)
+    self.set_interface(name='StepsOut', value=steps)
+    self.set_interface(name='SamplerOut', value=samplern)
+    self.set_interface(name='SeedOut', value=seed)
+    self.set_interface(name='PromptOut', value=prompt2)
 img2img_block.add_compute(img2img_func)
 
 
@@ -88,11 +207,9 @@ img2img_block.add_compute(img2img_func)
 #Dream Block - test
 #If an input is not connected, its value is none.
 dream_block = Block(name='Dream')
-
 dream_block.add_input(name='PromptIn')
 dream_block.add_input(name='SeedIn')
 dream_block.add_input(name='CFG ScaleIn')
-
 dream_block.add_option(name='seedInfo', type='display', value='SEED:')
 dream_block.add_option(name='Seed', type='input', value='')
 dream_block.add_option(name='promptInfo', type='display', value='PROMPT:')
@@ -127,12 +244,32 @@ def dream_func(self):
 dream_block.add_compute(dream_func)
 
 #Number Input
-num_block = Block(name='Number')
+num_block = Block(name='Int')
 num_block.add_output(name='number')
-num_block.add_option(name='number', type='number')
+num_block.add_option(name='number', type='integer')
 def num_func(self):
     self.set_interface(name='number', value=self.get_option(name='number'))
 num_block.add_compute(num_func)
+
+
+
+math_block = Block(name="Math")
+math_block.add_input(name='X')
+math_block.add_input(name='Y')
+math_block.add_option(name='Option', type='select', items=['+', '-', '*', '/'], value='+')
+math_block.add_output(name='Result')
+def math_func(self):
+    op = self.get_option(name='Option')
+    if op == '+':
+        a = x + y
+    elif op == '-':
+        a = x - y
+    elif op == '*':
+        a = x * y
+    elif op == '/':
+        a = x / y
+    self.set_interface(name='Result', value=a)
+math_block.add_compute(math_func)
 
 
 #Image Preview Block
@@ -142,7 +279,10 @@ def img_prev_func(self):
     st.session_state["node_preview_img_object"] = None
     if self.get_interface(name='iimage') != None:
         iimg = self.get_interface(name='iimage')
-        st.session_state["node_preview_img_object"] = iimg
+        #st.session_state["node_preview_img_object"] = iimg
+        if "currentImages" not in st.session_state:
+            st.session_state["currentImages"] = []
+        st.session_state["currentImages"].append(iimg)
     #return st.session_state["node_preview_image"]
 img_preview.add_compute(img_prev_func)
 
@@ -158,6 +298,7 @@ mandel_block.add_option(name='xb', type='slider', min=-2.5, max=2.5, value=1.0)
 mandel_block.add_option(name='ya', type='slider', min=-2.5, max=2.5, value=-1.5)
 mandel_block.add_option(name='yb', type='slider', min=-2.5, max=2.5, value=1.5)
 mandel_block.add_output(name='mandel')
+
 def mandel_func(self):
     # Mandelbrot fractal
     # FB - 201003151
@@ -186,6 +327,8 @@ def mandel_func(self):
             b = i % 16 * 16
             mimage.putpixel((x, y), b * 65536 + g * 256 + r)
     self.set_interface(name='mandel', value=mimage)
+
+
 mandel_block.add_compute(mandel_func)
 
 
@@ -234,19 +377,20 @@ blend_block.add_input(name='bImage_2')
 blend_block.add_option(name='alpha', type='slider', min=-0, max=1, value=0.5)
 blend_block.add_output(name='blend_ImageOut')
 def blend_func(self):
-    im1 = self.get_interface(name='bImage_1')
+    im1 = self.get_interface(name='bImage_1').convert('RGB')
 
-    im2 = self.get_interface(name='bImage_2')
+    im2 = self.get_interface(name='bImage_2').convert('RGB')
+    print(type(im1))
+    print(type(im2))
+
     alpha = self.get_option(name='alpha')
-    bimg = blend_img(im1, im2, alpha)
+    bimg = PIL.Image.blend(im1, im2, alpha)
 
     self.set_interface(name='blend_ImageOut', value=bimg)
 blend_block.add_compute(blend_func)
 
 #Invert Block
-def blend_img(im1, im2, alpha):
-    bimg = PIL.Image.blend(im1, im2, alpha)
-    return bimg
+
 invert_block = Block(name='Invert Image')
 invert_block.add_input(name='iImage_1')
 invert_block.add_output(name='invert_ImageOut')
@@ -259,6 +403,74 @@ def invert_func(self):
 invert_block.add_compute(invert_func)
 
 
+#Image Filter
+gaussian_block = Block(name='Gaussian Blur')
+gaussian_block.add_input(name='Input')
+gaussian_block.add_option(name='Radius', type='integer', value=2)
+
+gaussian_block.add_output(name='Output')
+
+def gaussian_func(self):
+    img = self.get_interface(name='Input')
+    radius = self.get_option(name='Radius')
+    #mode = self.get_option(name='Mode')
+    #print(mode)
+    img = img.filter(PIL.ImageFilter.GaussianBlur(radius=radius))
+    self.set_interface(name='Output', value = img)
+gaussian_block.add_compute(gaussian_func)
+
+#Convert Block
+imgfilter_block = Block(name='Basic Filters')
+imgfilter_block.add_input(name='Input')
+imgfilter_block.add_option(name='Mode', type='select', items=["BLUR", "CONTOUR", "DETAIL", "EDGE_ENHANCE", "EDGE_ENHANCE_MORE", "EMBOSS", "FIND_EDGES", "SHARPEN", "SMOOTH", "SMOOTH_MORE"], value="BLUR")
+
+imgfilter_block.add_output(name='Output')
+
+def imgfilter_func(self):
+    img = self.get_interface(name='Input')
+    if self.get_option(name='Mode') == 'BLUR':
+        img = img.filter(PIL.ImageFilter.BLUR)
+    elif self.get_option(name='Mode') == 'CONTOUR':
+        img = img.filter(PIL.ImageFilter.CONTOUR)
+    elif self.get_option(name='Mode') == 'DETAIL':
+        img = img.filter(PIL.ImageFilter.DETAIL)
+    elif self.get_option(name='Mode') == 'EDGE_ENHANCE':
+        img = img.filter(PIL.ImageFilter.EDGE_ENHANCE)
+    elif self.get_option(name='Mode') == 'EDGE_ENHANCE_MORE':
+        img = img.filter(PIL.ImageFilter.EDGE_ENHANCE_MORE)
+    elif self.get_option(name='Mode') == 'EMBOSS':
+        img = img.filter(PIL.ImageFilter.EMBOSS)
+    elif self.get_option(name='Mode') == 'FIND_EDGES':
+        img = img.filter(PIL.ImageFilter.FIND_EDGES)
+    elif self.get_option(name='Mode') == 'SHARPEN':
+        img = img.filter(PIL.ImageFilter.SHARPEN)
+    elif self.get_option(name='Mode') == 'SMOOTH':
+        img = img.filter(PIL.ImageFilter.SMOOTH)
+    elif self.get_option(name='Mode') == 'SMOOTH_MORE':
+        img = img.filter(PIL.ImageFilter.SMOOTH_MORE)
+    self.set_interface(name='Output', value = img)
+imgfilter_block.add_compute(imgfilter_func)
+
+
+
+#Convert Block
+convert_block = Block(name='Greyscale')
+convert_block.add_input(name='Input')
+#convert_block.add_option(name='Mode', type='select', items=["L", "P", "RGB", "RGBA", "CMYK"], value='P')
+
+convert_block.add_output(name='Output')
+
+def convert_func(self):
+    img = self.get_interface(name='Input')
+    #mode = self.get_option(name='Mode')
+    #print(mode)
+    img = PIL.ImageOps.grayscale(img)
+    img = img.convert('RGB')
+    self.set_interface(name='Output', value = img)
+convert_block.add_compute(convert_func)
+
+
+
 #Debug Block
 debug_block = Block(name='Debug')
 debug_block.add_input(name='Input')
@@ -266,6 +478,7 @@ debug_block.add_output(name='Output')
 
 def debug_func(self):
     data = self.get_interface(name='Input')
+    self.set_interface(name='Output', value=data)
     print(f'Input Type: {type(data)}')
     print(f'Input Content: {data}')
 debug_block.add_compute(debug_func)
@@ -504,10 +717,7 @@ def integer_block_func(self):
 integer_block.add_compute(integer_block_func)
 
 
-default_blocks_category = {'generators': [dream_block, img2img_block, mandel_block], 'image functions':[img_preview, blend_block, invert_block], 'test functions':[debug_block]}
-
-
-
+default_blocks_category = {'generators': [dream_block, img2img_block, mandel_block, julia_block], 'image functions':[img_preview, upscale_block, convert_block, blend_block, invert_block, gaussian_block, imgfilter_block], 'math':[num_block, math_block], 'file':[open_block, save_block, save_all_block], 'test functions':[debug_block]}
 
 
 
